@@ -3,7 +3,10 @@ import 'dart:ui' show ImageFilter;
 import 'package:file_picker/file_picker.dart' show FilePicker;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
-    show FilteringTextInputFormatter, LengthLimitingTextInputFormatter;
+    show
+        FilteringTextInputFormatter,
+        LengthLimitingTextInputFormatter,
+        TextInputFormatter;
 import 'package:flutter_hooks/flutter_hooks.dart'
     show HookWidget, useFocusNode, useState, useTextEditingController;
 import 'package:hooks_riverpod/hooks_riverpod.dart'
@@ -25,6 +28,7 @@ import 'package:tts_mod_vault/src/state/provider.dart'
         settingsProvider;
 import 'package:tts_mod_vault/src/models/url_replacement_preset.dart'
     show UrlReplacementPreset;
+import 'package:tts_mod_vault/src/network/proxy.dart' show ProxyType;
 import 'package:tts_mod_vault/src/state/settings/settings_state.dart'
     show SettingsState;
 import 'package:tts_mod_vault/src/state/sort_and_filter/backup_sort_and_filter_state.dart'
@@ -103,6 +107,18 @@ class SettingsDialog extends HookConsumerWidget {
     final ignoredDomains =
         useState<List<String>>(List.from(settings.ignoredDomains));
 
+    // Network - Proxy
+    final proxyEnabled = useState(settings.proxyEnabled);
+    final proxyType = useState(settings.proxyType);
+    final proxyHostController =
+        useTextEditingController(text: settings.proxyHost);
+    final proxyPortController = useTextEditingController(
+        text: settings.proxyPort > 0 ? settings.proxyPort.toString() : '');
+    final proxyUsernameController =
+        useTextEditingController(text: settings.proxyUsername);
+    final proxyPasswordController =
+        useTextEditingController(text: settings.proxyPassword);
+
     // Features
     final checkForUpdatesOnStartBox = useState(settings.checkForUpdatesOnStart);
     final forceBackupJsonFilename = useState(settings.forceBackupJsonFilename);
@@ -148,6 +164,12 @@ class SettingsDialog extends HookConsumerWidget {
         ignoredSubfolders: ignoredSubfolders.value,
         ignoredDomains: ignoredDomains.value,
         showPdfThumbnails: showPdfThumbnails.value,
+        proxyEnabled: proxyEnabled.value,
+        proxyType: proxyType.value,
+        proxyHost: proxyHostController.text.trim(),
+        proxyPort: int.tryParse(proxyPortController.text.trim()) ?? 0,
+        proxyUsername: proxyUsernameController.text,
+        proxyPassword: proxyPasswordController.text,
       );
 
       if (ref.read(selectedModTypeProvider) == ModTypeEnum.savedObject &&
@@ -275,6 +297,14 @@ class SettingsDialog extends HookConsumerWidget {
                                   textFieldFocusNode: textFieldFocusNode,
                                   numberValue: concurrentDownloadsValue,
                                   ignoredDomains: ignoredDomains,
+                                  proxyEnabled: proxyEnabled,
+                                  proxyType: proxyType,
+                                  proxyHostController: proxyHostController,
+                                  proxyPortController: proxyPortController,
+                                  proxyUsernameController:
+                                      proxyUsernameController,
+                                  proxyPasswordController:
+                                      proxyPasswordController,
                                 );
 
                               case SettingsSection.updateUrlsPresets:
@@ -318,6 +348,21 @@ class SettingsDialog extends HookConsumerWidget {
                         if (context.mounted) Navigator.pop(context);
                         return;
                       }
+
+                      if (proxyEnabled.value) {
+                        final host = proxyHostController.text.trim();
+                        final port =
+                            int.tryParse(proxyPortController.text.trim());
+                        if (host.isEmpty ||
+                            port == null ||
+                            port < 1 ||
+                            port > 65535) {
+                          showSnackBar(context,
+                              'Enter a valid proxy host and port (1-65535)');
+                          return;
+                        }
+                      }
+
                       await saveSettingsChanges();
                     },
                     icon: Icon(Icons.save),
@@ -1076,12 +1121,24 @@ class SettingsNetworkColumn extends StatelessWidget {
     required this.textFieldFocusNode,
     required this.numberValue,
     required this.ignoredDomains,
+    required this.proxyEnabled,
+    required this.proxyType,
+    required this.proxyHostController,
+    required this.proxyPortController,
+    required this.proxyUsernameController,
+    required this.proxyPasswordController,
   });
 
   final TextEditingController textFieldController;
   final FocusNode textFieldFocusNode;
   final ValueNotifier<int> numberValue;
   final ValueNotifier<List<String>> ignoredDomains;
+  final ValueNotifier<bool> proxyEnabled;
+  final ValueNotifier<ProxyType> proxyType;
+  final TextEditingController proxyHostController;
+  final TextEditingController proxyPortController;
+  final TextEditingController proxyUsernameController;
+  final TextEditingController proxyPasswordController;
 
   @override
   Widget build(BuildContext context) {
@@ -1151,8 +1208,217 @@ class SettingsNetworkColumn extends StatelessWidget {
             addLabel: 'Add domain name',
             onChanged: (list) => ignoredDomains.value = list,
           ),
+          const SizedBox(height: 16),
+          _ProxySettings(
+            proxyEnabled: proxyEnabled,
+            proxyType: proxyType,
+            hostController: proxyHostController,
+            portController: proxyPortController,
+            usernameController: proxyUsernameController,
+            passwordController: proxyPasswordController,
+          ),
         ],
       ),
+    );
+  }
+}
+
+class _ProxySettings extends StatelessWidget {
+  const _ProxySettings({
+    required this.proxyEnabled,
+    required this.proxyType,
+    required this.hostController,
+    required this.portController,
+    required this.usernameController,
+    required this.passwordController,
+  });
+
+  final ValueNotifier<bool> proxyEnabled;
+  final ValueNotifier<ProxyType> proxyType;
+  final TextEditingController hostController;
+  final TextEditingController portController;
+  final TextEditingController usernameController;
+  final TextEditingController passwordController;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([proxyEnabled, proxyType]),
+      builder: (context, _) {
+        final enabled = proxyEnabled.value;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              spacing: 4,
+              children: [
+                SectionHeader(title: "Proxy"),
+                CustomTooltip(
+                  message:
+                      'Routes all connections (Steam Workshop, asset downloads, update checks) through a proxy.\nUseful when Steam or asset servers are blocked or unreachable directly.\nSupported types: HTTP/HTTPS and SOCKS5.\nChanges take effect immediately after saving.',
+                  child: Icon(Icons.info_outline),
+                ),
+              ],
+            ),
+            CheckboxListTile(
+              title: const Text('Use proxy for all connections'),
+              value: enabled,
+              checkColor: Colors.black,
+              activeColor: Colors.white,
+              contentPadding: EdgeInsets.zero,
+              onChanged: (value) => proxyEnabled.value = value ?? enabled,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Proxy type',
+                    style: TextStyle(fontSize: 16),
+                  ),
+                ),
+                DropdownButton<ProxyType>(
+                  mouseCursor: SystemMouseCursors.click,
+                  value: proxyType.value,
+                  dropdownColor: Colors.white,
+                  style: const TextStyle(color: Colors.white),
+                  underline: Container(height: 2, color: Colors.white),
+                  focusColor: Colors.transparent,
+                  selectedItemBuilder: (context) {
+                    return ProxyType.values.map<Widget>((item) {
+                      return Container(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          item.label,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      );
+                    }).toList();
+                  },
+                  items: ProxyType.values.map((type) {
+                    return DropdownMenuItem<ProxyType>(
+                      value: type,
+                      child: Text(
+                        type.label,
+                        style: const TextStyle(color: Colors.black),
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: enabled
+                      ? (value) {
+                          if (value != null) proxyType.value = value;
+                        }
+                      : null,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              spacing: 8,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: _ProxyTextField(
+                    label: 'Host',
+                    hintText: 'e.g. 127.0.0.1',
+                    controller: hostController,
+                    enabled: enabled,
+                  ),
+                ),
+                Expanded(
+                  flex: 1,
+                  child: _ProxyTextField(
+                    label: 'Port',
+                    hintText: '8080',
+                    controller: portController,
+                    enabled: enabled,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(5),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              spacing: 8,
+              children: [
+                Expanded(
+                  child: _ProxyTextField(
+                    label: 'Username (optional)',
+                    controller: usernameController,
+                    enabled: enabled,
+                  ),
+                ),
+                Expanded(
+                  child: _ProxyTextField(
+                    label: 'Password (optional)',
+                    controller: passwordController,
+                    enabled: enabled,
+                    obscureText: true,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ProxyTextField extends StatelessWidget {
+  const _ProxyTextField({
+    required this.label,
+    required this.controller,
+    required this.enabled,
+    this.hintText,
+    this.obscureText = false,
+    this.keyboardType,
+    this.inputFormatters,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final bool enabled;
+  final String? hintText;
+  final bool obscureText;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+        ),
+        const SizedBox(height: 4),
+        TextField(
+          controller: controller,
+          enabled: enabled,
+          obscureText: obscureText,
+          keyboardType: keyboardType,
+          inputFormatters: inputFormatters,
+          cursorColor: Colors.black,
+          style: const TextStyle(fontSize: 14, color: Colors.black),
+          decoration: InputDecoration(
+            hintText: hintText,
+            hintStyle: TextStyle(color: Colors.grey[600]),
+            filled: true,
+            fillColor: enabled ? Colors.white : Colors.grey[400],
+            border: const OutlineInputBorder(),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -7,9 +7,13 @@ import 'package:pdfrx_engine/pdfrx_engine.dart' show Pdfrx, pdfrxInitialize;
 import 'package:window_manager/window_manager.dart'
     show WindowOptions, windowManager;
 import 'src/app.dart' show App;
+import 'src/network/proxy.dart' show installGlobalProxyOverrides;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Install proxy-aware HttpOverrides before any network request so every
+  // connection (http, Dio, image loading, update checks) honors the proxy.
+  installGlobalProxyOverrides();
   await windowManager.ensureInitialized();
   await Hive.initFlutter('TTS Mod Vault');
   _configurePdfiumModulePath();

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart' show debugPrint;
 import 'package:tts_mod_vault/src/models/url_replacement_preset.dart'
     show UrlReplacementPreset;
+import 'package:tts_mod_vault/src/network/proxy.dart' show ProxyType;
 import 'package:tts_mod_vault/src/state/sort_and_filter/backup_sort_and_filter_state.dart'
     show BackupSortOptionEnum;
 import 'package:tts_mod_vault/src/state/sort_and_filter/sort_and_filter_state.dart'
@@ -24,6 +25,12 @@ class SettingsState {
   final List<String> ignoredSubfolders;
   final List<String> ignoredDomains;
   final bool showPdfThumbnails;
+  final bool proxyEnabled;
+  final ProxyType proxyType;
+  final String proxyHost;
+  final int proxyPort;
+  final String proxyUsername;
+  final String proxyPassword;
 
   const SettingsState({
     required this.useModsListView,
@@ -43,6 +50,12 @@ class SettingsState {
     required this.ignoredSubfolders,
     required this.ignoredDomains,
     required this.showPdfThumbnails,
+    required this.proxyEnabled,
+    required this.proxyType,
+    required this.proxyHost,
+    required this.proxyPort,
+    required this.proxyUsername,
+    required this.proxyPassword,
   });
 
   factory SettingsState.defaultState() {
@@ -64,6 +77,12 @@ class SettingsState {
       ignoredSubfolders: const [],
       ignoredDomains: const [],
       showPdfThumbnails: false,
+      proxyEnabled: false,
+      proxyType: ProxyType.http,
+      proxyHost: '',
+      proxyPort: 0,
+      proxyUsername: '',
+      proxyPassword: '',
     );
   }
 
@@ -87,6 +106,12 @@ class SettingsState {
       'ignoredSubfolders': ignoredSubfolders,
       'ignoredDomains': ignoredDomains,
       'showPdfThumbnails': showPdfThumbnails,
+      'proxyEnabled': proxyEnabled,
+      'proxyType': proxyType.label,
+      'proxyHost': proxyHost,
+      'proxyPort': proxyPort,
+      'proxyUsername': proxyUsername,
+      'proxyPassword': proxyPassword,
     };
   }
 
@@ -112,6 +137,12 @@ class SettingsState {
       ignoredSubfolders: _parseStringList(json['ignoredSubfolders']),
       ignoredDomains: _parseStringList(json['ignoredDomains']),
       showPdfThumbnails: _parseBool(json['showPdfThumbnails'], false),
+      proxyEnabled: _parseBool(json['proxyEnabled'], false),
+      proxyType: _parseProxyType(json['proxyType']),
+      proxyHost: _parseString(json['proxyHost'], ''),
+      proxyPort: _parseInt(json['proxyPort'], 0),
+      proxyUsername: _parseString(json['proxyUsername'], ''),
+      proxyPassword: _parseString(json['proxyPassword'], ''),
     );
   }
 
@@ -147,6 +178,17 @@ class SettingsState {
       return int.tryParse(value) ?? defaultValue;
     }
     return defaultValue;
+  }
+
+  static ProxyType _parseProxyType(dynamic value) {
+    if (value is String) return ProxyType.fromLabel(value);
+    return ProxyType.http;
+  }
+
+  static String _parseString(dynamic value, String defaultValue) {
+    if (value == null) return defaultValue;
+    if (value is String) return value;
+    return value.toString();
   }
 
   static double _parseDouble(dynamic value, double defaultValue) {
