@@ -44,8 +44,20 @@ requires *at least* that distro's glibc at runtime.
 - Built on **Ubuntu 22.04** (glibc 2.35) → runs on the large majority of distros
   from the last several years. **This is what you want for releases.**
 
-Since there's no GitHub Actions in use, the recommended way to get an old glibc
-without a second VM is a container:
+### Recommended: build in CI (no local machine needed)
+
+The GitHub Actions workflow at `.github/workflows/build.yml` builds the AppImage
+on an **ubuntu-22.04** runner (glibc 2.35) automatically, so you don't need a VM
+or container locally. It runs on:
+
+- pushing a `v*` tag → builds Windows + Linux and drafts a GitHub Release with
+  the artifacts attached,
+- manual **Run workflow** (workflow_dispatch) → builds and uploads artifacts,
+- pull requests → build-only validation.
+
+### Alternative: local container
+
+To reproduce the old-glibc build locally without a second VM, use a container:
 
 ```bash
 # from the repo root, on any Linux host with Docker/Podman

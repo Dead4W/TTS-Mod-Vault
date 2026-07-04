@@ -1,0 +1,178 @@
+name: Build
+
+# Builds universal Windows and Linux releases on GitHub-hosted runners, so the
+# local machine is never used. Triggers:
+#   - push of a tag "v*"   -> builds + creates/updates a GitHub Release
+#   - manual dispatch      -> builds + uploads artifacts (no release)
+#   - pull request         -> builds only (validation)
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+env:
+  # Keep in sync with .fvmrc
+  FLUTTER_VERSION: "3.44.4"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Windows
+  # ---------------------------------------------------------------------------
+  windows:
+    name: Build Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Enable native assets (best-effort)
+        shell: pwsh
+        run: |
+          flutter config --enable-native-assets
+          exit 0
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Bundle Visual C++ runtime (self-contained zip)
+        shell: pwsh
+        run: |
+          $release = "build/windows/x64/runner/Release"
+          foreach ($dll in @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
+            $src = Join-Path $env:SystemRoot "System32/$dll"
+            if (Test-Path $src) {
+              Copy-Item $src -Destination $release -Force
+              Write-Host "Copied $dll"
+            }
+          }
+
+      - name: Read app version
+        id: version
+        shell: pwsh
+        run: |
+          $line = (Select-String -Path pubspec.yaml -Pattern '^version:\s*(.+)$').Matches[0].Groups[1].Value
+          $ver = $line.Split('+')[0].Trim()
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $name = "TTS_Mod_Vault-${{ steps.version.outputs.version }}-windows-x64.zip"
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath $name -Force
+          Write-Host "Created $name"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: TTS_Mod_Vault-*-windows-x64.zip
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Linux
+  #
+  # Built on ubuntu-22.04 (glibc 2.35) so the AppImage runs on the large
+  # majority of distros from the last several years. See
+  # packaging/appimage/README.md ("where you build sets the glibc floor").
+  # ---------------------------------------------------------------------------
+  linux:
+    name: Build Linux (x64)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev \
+            curl file xz-utils
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Enable Linux desktop
+        run: flutter config --enable-linux-desktop
+
+      - name: Enable native assets (best-effort)
+        run: flutter config --enable-native-assets || true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Read app version
+        id: version
+        run: |
+          ver=$(grep '^version:' pubspec.yaml | sed 's/version:[[:space:]]*//' | cut -d'+' -f1 | tr -d '[:space:]')
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Build AppImage
+        run: bash packaging/appimage/build_appimage.sh
+
+      - name: Package plain bundle (tar.gz fallback)
+        run: |
+          ver="${{ steps.version.outputs.version }}"
+          tar -czf "TTS_Mod_Vault-${ver}-linux-x64.tar.gz" \
+            -C build/linux/x64/release/bundle .
+
+      - name: Rename AppImage with version
+        run: |
+          ver="${{ steps.version.outputs.version }}"
+          mv "build/TTS_Mod_Vault-x86_64.AppImage" \
+             "TTS_Mod_Vault-${ver}-x86_64.AppImage"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: |
+            TTS_Mod_Vault-*-x86_64.AppImage
+            TTS_Mod_Vault-*-linux-x64.tar.gz
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Release (only on tag pushes)
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create / update release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/windows-x64/*
+            artifacts/linux-x64/*
